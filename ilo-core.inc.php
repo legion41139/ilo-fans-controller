@@ -154,22 +154,114 @@ function set_fan_speeds($speeds) {
 }
 
 /**
- * Apply temperature-based fan curve:
- * avg(CPU temps) > threshold  => warm speed (default 25%)
- * otherwise                   => cool speed (default 15%)
+ * Default multi-step fan curve (avg CPU °C → fan %).
+ * Each step applies while avg < max_temp; the last step (null) is the catch-all.
+ */
+function get_default_fan_curve() {
+	return [
+		[ 'max_temp' => 50, 'speed' => 15 ],   // < 50°C (incl. 40–50)
+		[ 'max_temp' => 60, 'speed' => 25 ],   // 50–60
+		[ 'max_temp' => 70, 'speed' => 50 ],   // 60–70
+		[ 'max_temp' => 80, 'speed' => 50 ],   // 70–80 (unspecified → hold 50%)
+		[ 'max_temp' => 90, 'speed' => 75 ],   // 80–90
+		[ 'max_temp' => null, 'speed' => 100 ], // ≥ 90
+	];
+}
+
+/**
+ * Resolve $AUTO_FAN_CURVE (or legacy two-step vars) into a sorted step list.
+ */
+function get_fan_curve() {
+	global $AUTO_FAN_CURVE, $AUTO_TEMP_THRESHOLD, $AUTO_FAN_SPEED_COOL, $AUTO_FAN_SPEED_WARM, $MINIMUM_FAN_SPEED;
+
+	$curve = null;
+
+	if (isset($AUTO_FAN_CURVE) && is_array($AUTO_FAN_CURVE) && count($AUTO_FAN_CURVE) > 0)
+		$curve = $AUTO_FAN_CURVE;
+	else if (isset($AUTO_TEMP_THRESHOLD) || isset($AUTO_FAN_SPEED_COOL) || isset($AUTO_FAN_SPEED_WARM)) {
+		// Legacy two-step config
+		$threshold = isset($AUTO_TEMP_THRESHOLD) ? (int) $AUTO_TEMP_THRESHOLD : 50;
+		$cool = isset($AUTO_FAN_SPEED_COOL) ? (int) $AUTO_FAN_SPEED_COOL : 15;
+		$warm = isset($AUTO_FAN_SPEED_WARM) ? (int) $AUTO_FAN_SPEED_WARM : 25;
+		$curve = [
+			[ 'max_temp' => $threshold, 'speed' => $cool ],
+			[ 'max_temp' => null, 'speed' => $warm ],
+		];
+	} else
+		$curve = get_default_fan_curve();
+
+	$normalized = [];
+	foreach ($curve as $step) {
+		$max = array_key_exists('max_temp', $step) ? $step['max_temp'] : ($step[0] ?? null);
+		$speed = array_key_exists('speed', $step) ? $step['speed'] : ($step[1] ?? null);
+		if ($speed === null)
+			continue;
+		$normalized[] = [
+			'max_temp' => $max === null || $max === '' ? null : (int) $max,
+			'speed' => max((int) $speed, (int) $MINIMUM_FAN_SPEED),
+		];
+	}
+
+	usort($normalized, function ($a, $b) {
+		if ($a['max_temp'] === null) return 1;
+		if ($b['max_temp'] === null) return -1;
+		return $a['max_temp'] <=> $b['max_temp'];
+	});
+
+	return count($normalized) > 0 ? $normalized : get_default_fan_curve();
+}
+
+/**
+ * Pick fan % from the curve for a given average CPU temperature.
+ */
+function fan_speed_for_temp($average_temp) {
+	foreach (get_fan_curve() as $step) {
+		if ($step['max_temp'] === null || $average_temp < $step['max_temp'])
+			return (int) $step['speed'];
+	}
+	return 100;
+}
+
+/**
+ * Human-readable curve bands for the UI / API.
+ */
+function describe_fan_curve($curve = null) {
+	$curve = $curve ?? get_fan_curve();
+	$bands = [];
+	$prev = null;
+
+	foreach ($curve as $step) {
+		$speed = (int) $step['speed'];
+		if ($step['max_temp'] === null) {
+			$bands[] = [
+				'label' => $prev === null ? 'any' : "≥ {$prev}°C",
+				'min_temp' => $prev,
+				'max_temp' => null,
+				'speed' => $speed,
+			];
+		} else {
+			$max = (int) $step['max_temp'];
+			$label = $prev === null ? "< {$max}°C" : "{$prev}–{$max}°C";
+			$bands[] = [
+				'label' => $label,
+				'min_temp' => $prev,
+				'max_temp' => $max,
+				'speed' => $speed,
+			];
+			$prev = $max;
+		}
+	}
+
+	return $bands;
+}
+
+/**
+ * Apply temperature-based multi-step fan curve from average CPU temp.
  */
 function apply_temperature_control() {
-	global $AUTO_TEMP_THRESHOLD, $AUTO_FAN_SPEED_COOL, $AUTO_FAN_SPEED_WARM, $MINIMUM_FAN_SPEED;
-
-	$threshold = isset($AUTO_TEMP_THRESHOLD) ? (int) $AUTO_TEMP_THRESHOLD : 50;
-	$cool_speed = isset($AUTO_FAN_SPEED_COOL) ? (int) $AUTO_FAN_SPEED_COOL : 15;
-	$warm_speed = isset($AUTO_FAN_SPEED_WARM) ? (int) $AUTO_FAN_SPEED_WARM : 25;
-
-	$cool_speed = max($cool_speed, (int) $MINIMUM_FAN_SPEED);
-	$warm_speed = max($warm_speed, (int) $MINIMUM_FAN_SPEED);
-
 	$thermal = get_thermal();
 	$cpu_temps = get_cpu_temperatures($thermal['temperatures']);
+	$curve = get_fan_curve();
 
 	if (count($cpu_temps) === 0) {
 		return [
@@ -179,26 +271,26 @@ function apply_temperature_control() {
 			'cpu_temps' => [],
 			'average_temp' => null,
 			'target_speed' => null,
+			'curve' => describe_fan_curve($curve),
 		];
 	}
 
 	$average_temp = array_sum($cpu_temps) / count($cpu_temps);
-	$target_speed = $average_temp > $threshold ? $warm_speed : $cool_speed;
-
+	$target_speed = fan_speed_for_temp($average_temp);
 	$fans = set_fan_speeds($target_speed);
 
 	return [
 		'ok' => true,
 		'cpu_temps' => $cpu_temps,
 		'average_temp' => round($average_temp, 1),
-		'threshold' => $threshold,
 		'target_speed' => $target_speed,
+		'curve' => describe_fan_curve($curve),
 		'fans' => $fans,
 	];
 }
 
 function get_auto_status() {
-	global $AUTO_TEMP_THRESHOLD, $AUTO_FAN_SPEED_COOL, $AUTO_FAN_SPEED_WARM, $AUTO_POLL_INTERVAL;
+	global $AUTO_POLL_INTERVAL;
 
 	$thermal = get_thermal();
 	$cpu_temps = get_cpu_temperatures($thermal['temperatures']);
@@ -206,22 +298,18 @@ function get_auto_status() {
 		? round(array_sum($cpu_temps) / count($cpu_temps), 1)
 		: null;
 
-	$threshold = isset($AUTO_TEMP_THRESHOLD) ? (int) $AUTO_TEMP_THRESHOLD : 50;
-	$cool_speed = isset($AUTO_FAN_SPEED_COOL) ? (int) $AUTO_FAN_SPEED_COOL : 15;
-	$warm_speed = isset($AUTO_FAN_SPEED_WARM) ? (int) $AUTO_FAN_SPEED_WARM : 25;
+	$curve = get_fan_curve();
 	$poll_interval = isset($AUTO_POLL_INTERVAL) ? (int) $AUTO_POLL_INTERVAL : 30;
 
 	$target_speed = null;
 	if ($average_temp !== null)
-		$target_speed = $average_temp > $threshold ? $warm_speed : $cool_speed;
+		$target_speed = fan_speed_for_temp($average_temp);
 
 	return [
 		'cpu_temps' => $cpu_temps,
 		'average_temp' => $average_temp,
-		'threshold' => $threshold,
-		'cool_speed' => $cool_speed,
-		'warm_speed' => $warm_speed,
 		'target_speed' => $target_speed,
+		'curve' => describe_fan_curve($curve),
 		'poll_interval' => $poll_interval,
 		'fans' => $thermal['fans'],
 	];

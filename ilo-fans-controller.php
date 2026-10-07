@@ -323,9 +323,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				<div class="flex items-center justify-between">
 					<div>
 						<h2 class="text-lg font-semibold select-none dark:text-white text-black">Auto (temperature)</h2>
-						<p class="text-sm dark:text-gray-500 text-gray-400 select-none mt-0.5">
-							≤ <span x-text="$store.auto.threshold"></span>°C → <span x-text="$store.auto.coolSpeed"></span>% ·
-							&gt; <span x-text="$store.auto.threshold"></span>°C → <span x-text="$store.auto.warmSpeed"></span>%
+						<p class="text-sm dark:text-gray-500 text-gray-400 select-none mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5">
+							<template x-for="(band, i) in $store.auto.curve" :key="i">
+								<span>
+									<span x-text="band.label"></span> → <span x-text="band.speed + '%'"></span><span x-show="i < $store.auto.curve.length - 1"> ·</span>
+								</span>
+							</template>
 						</p>
 					</div>
 
@@ -603,9 +606,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					enabled: localStorage.getItem('autoMode') === '1',
 					cpuTemps: <?php echo json_encode($AUTO_STATUS['cpu_temps']); ?>,
 					averageTemp: <?php echo json_encode($AUTO_STATUS['average_temp']); ?>,
-					threshold: <?php echo (int) $AUTO_STATUS['threshold']; ?>,
-					coolSpeed: <?php echo (int) $AUTO_STATUS['cool_speed']; ?>,
-					warmSpeed: <?php echo (int) $AUTO_STATUS['warm_speed']; ?>,
+					curve: <?php echo json_encode($AUTO_STATUS['curve']); ?>,
 					targetSpeed: <?php echo json_encode($AUTO_STATUS['target_speed']); ?>,
 					pollInterval: <?php echo (int) $AUTO_STATUS['poll_interval']; ?> * 1000,
 					_timer: null,
@@ -653,7 +654,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							if (result.ok) {
 								this.cpuTemps = result.cpu_temps;
 								this.averageTemp = result.average_temp;
-								this.threshold = result.threshold;
+								this.curve = result.curve || this.curve;
 								this.targetSpeed = result.target_speed;
 								Alpine.store('fans').fans = result.fans;
 								Alpine.store('presets').currentPreset = null;

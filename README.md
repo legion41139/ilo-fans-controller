@@ -25,10 +25,14 @@ When **Auto (temperature)** is enabled in the UI (or via the CLI script below), 
 
 | Average CPU temp | Fan speed |
 | --- | --- |
-| ≤ 50°C | 15% |
-| > 50°C | 25% |
+| < 50°C | 15% |
+| 50–60°C | 25% |
+| 60–70°C | 50% |
+| 70–80°C | 50% |
+| 80–90°C | 75% |
+| ≥ 90°C | 100% |
 
-Thresholds and speeds are configurable in [`config.inc.php`](config.inc.php) / Docker env vars (`AUTO_TEMP_THRESHOLD`, `AUTO_FAN_SPEED_COOL`, `AUTO_FAN_SPEED_WARM`).
+The curve is configurable in [`config.inc.php`](config.inc.php) (`$AUTO_FAN_CURVE`) or the Docker env var `AUTO_FAN_CURVE` (JSON).
 
 **Docker:** auto control is **on by default** inside the container. A background loop applies the curve every `AUTO_POLL_INTERVAL` seconds (default 30) — no browser or host cron needed. Set `AUTO_CONTROL_ENABLED=0` to disable it.
 
