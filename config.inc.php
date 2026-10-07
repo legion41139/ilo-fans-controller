@@ -24,8 +24,9 @@ $MINIMUM_FAN_SPEED = 10;
 /*
   TEMPERATURE-BASED AUTO CONTROL
   --------------
-  When auto mode is enabled (UI toggle or
-  auto-control.php via cron), fans follow:
+  In Docker, a background loop applies this
+  curve automatically (AUTO_CONTROL_ENABLED).
+  The UI toggle / auto-control.php also use it:
 
     avg(CPU1, CPU2, ...) <= threshold  => cool speed
     avg(CPU1, CPU2, ...) >  threshold  => warm speed
@@ -40,7 +41,10 @@ $AUTO_FAN_SPEED_COOL = 15;
 // Fan speed (%) when average CPU temp is above the threshold
 $AUTO_FAN_SPEED_WARM = 25;
 
-// How often the web UI re-checks temperatures when auto mode is on (seconds)
+// How often auto control re-checks temperatures (Docker loop + UI poll), seconds
 $AUTO_POLL_INTERVAL = 30;
+
+// Docker only: run the background auto-control loop (true/false)
+$AUTO_CONTROL_ENABLED = true;
 
 ?>

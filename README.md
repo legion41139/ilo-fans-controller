@@ -30,17 +30,13 @@ When **Auto (temperature)** is enabled in the UI (or via the CLI script below), 
 
 Thresholds and speeds are configurable in [`config.inc.php`](config.inc.php) / Docker env vars (`AUTO_TEMP_THRESHOLD`, `AUTO_FAN_SPEED_COOL`, `AUTO_FAN_SPEED_WARM`).
 
-The web UI polls and re-applies while the page is open. For continuous control when the browser is closed, run `auto-control.php` on a schedule:
+**Docker:** auto control is **on by default** inside the container. A background loop applies the curve every `AUTO_POLL_INTERVAL` seconds (default 30) — no browser or host cron needed. Set `AUTO_CONTROL_ENABLED=0` to disable it.
+
+For a non-Docker install, run `auto-control.php` on a schedule:
 
 ```sh
 # Every minute via cron
 * * * * * php /var/www/html/ilo-fans-controller/auto-control.php >/dev/null 2>&1
-```
-
-Or with Docker:
-
-```sh
-docker exec ilo-fans-controller php /var/www/html/auto-control.php
 ```
 
 ### Can I use this tool with my HP server? 🖥️

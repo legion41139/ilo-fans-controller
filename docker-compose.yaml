@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: ilo-fans-controller
+    restart: always
     ports:
       # You can use whatever (unused) port instead of 8000.
       - "8000:80"
@@ -10,8 +12,9 @@ services:
       ILO_HOST: 'your-ilo-address'  # Ex. 192.168.1.69
       ILO_USERNAME: 'your-ilo-username'  # Ex. Administrator
       ILO_PASSWORD: 'your-ilo-password'  # Ex. AdministratorPassword1234
-      # Temperature-based auto control (optional; defaults shown)
-      # AUTO_TEMP_THRESHOLD: 50   # °C average CPU temp
-      # AUTO_FAN_SPEED_COOL: 15   # % when avg <= threshold
-      # AUTO_FAN_SPEED_WARM: 25   # % when avg > threshold
-      # AUTO_POLL_INTERVAL: 30    # UI poll interval in seconds
+      # Auto fan control runs inside the container by default
+      AUTO_CONTROL_ENABLED: 1
+      AUTO_POLL_INTERVAL: 30          # seconds between temp checks
+      # AUTO_TEMP_THRESHOLD: 50       # °C average CPU temp
+      # AUTO_FAN_SPEED_COOL: 15       # % when avg <= threshold
+      # AUTO_FAN_SPEED_WARM: 25       # % when avg > threshold
