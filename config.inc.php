@@ -24,8 +24,8 @@ $MINIMUM_FAN_SPEED = 10;
 /*
   TEMPERATURE-BASED AUTO CONTROL
   --------------
-  Fan % is chosen from average CPU temp using
-  the curve below (each step: avg < max_temp).
+  Fan % is chosen from the hottest CPU temp using
+  the curve below (each step: temp < max_temp).
   The last step (max_temp null) is the catch-all.
 */
 

@@ -15,5 +15,5 @@ services:
       # Auto fan control runs inside the container by default
       AUTO_CONTROL_ENABLED: 1
       AUTO_POLL_INTERVAL: 30          # seconds between temp checks
-      # Optional JSON curve override (defaults: <50→15%, 50–60→25%, 60–70→50%, 70–80→50%, 80–90→75%, ≥90→100%)
+      # Optional JSON curve override vs hottest CPU °C (defaults: <50→15%, 50–60→25%, 60–70→50%, 70–80→50%, 80–90→75%, ≥90→100%)
       # AUTO_FAN_CURVE: '[{"max_temp":50,"speed":15},{"max_temp":60,"speed":25},{"max_temp":70,"speed":50},{"max_temp":80,"speed":50},{"max_temp":90,"speed":75},{"max_temp":null,"speed":100}]'

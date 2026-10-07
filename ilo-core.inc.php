@@ -154,8 +154,8 @@ function set_fan_speeds($speeds) {
 }
 
 /**
- * Default multi-step fan curve (avg CPU °C → fan %).
- * Each step applies while avg < max_temp; the last step (null) is the catch-all.
+ * Default multi-step fan curve (highest CPU °C → fan %).
+ * Each step applies while temp < max_temp; the last step (null) is the catch-all.
  */
 function get_default_fan_curve() {
 	return [
@@ -212,11 +212,11 @@ function get_fan_curve() {
 }
 
 /**
- * Pick fan % from the curve for a given average CPU temperature.
+ * Pick fan % from the curve for a given CPU temperature (°C).
  */
-function fan_speed_for_temp($average_temp) {
+function fan_speed_for_temp($temp) {
 	foreach (get_fan_curve() as $step) {
-		if ($step['max_temp'] === null || $average_temp < $step['max_temp'])
+		if ($step['max_temp'] === null || $temp < $step['max_temp'])
 			return (int) $step['speed'];
 	}
 	return 100;
@@ -256,7 +256,7 @@ function describe_fan_curve($curve = null) {
 }
 
 /**
- * Apply temperature-based multi-step fan curve from average CPU temp.
+ * Apply temperature-based multi-step fan curve using the hottest CPU.
  */
 function apply_temperature_control() {
 	$thermal = get_thermal();
@@ -269,20 +269,20 @@ function apply_temperature_control() {
 			'error' => 'No CPU temperature sensors found',
 			'fans' => $thermal['fans'],
 			'cpu_temps' => [],
-			'average_temp' => null,
+			'max_temp' => null,
 			'target_speed' => null,
 			'curve' => describe_fan_curve($curve),
 		];
 	}
 
-	$average_temp = array_sum($cpu_temps) / count($cpu_temps);
-	$target_speed = fan_speed_for_temp($average_temp);
+	$max_temp = max($cpu_temps);
+	$target_speed = fan_speed_for_temp($max_temp);
 	$fans = set_fan_speeds($target_speed);
 
 	return [
 		'ok' => true,
 		'cpu_temps' => $cpu_temps,
-		'average_temp' => round($average_temp, 1),
+		'max_temp' => $max_temp,
 		'target_speed' => $target_speed,
 		'curve' => describe_fan_curve($curve),
 		'fans' => $fans,
@@ -294,20 +294,18 @@ function get_auto_status() {
 
 	$thermal = get_thermal();
 	$cpu_temps = get_cpu_temperatures($thermal['temperatures']);
-	$average_temp = count($cpu_temps) > 0
-		? round(array_sum($cpu_temps) / count($cpu_temps), 1)
-		: null;
+	$max_temp = count($cpu_temps) > 0 ? max($cpu_temps) : null;
 
 	$curve = get_fan_curve();
 	$poll_interval = isset($AUTO_POLL_INTERVAL) ? (int) $AUTO_POLL_INTERVAL : 30;
 
 	$target_speed = null;
-	if ($average_temp !== null)
-		$target_speed = fan_speed_for_temp($average_temp);
+	if ($max_temp !== null)
+		$target_speed = fan_speed_for_temp($max_temp);
 
 	return [
 		'cpu_temps' => $cpu_temps,
-		'average_temp' => $average_temp,
+		'max_temp' => $max_temp,
 		'target_speed' => $target_speed,
 		'curve' => describe_fan_curve($curve),
 		'poll_interval' => $poll_interval,

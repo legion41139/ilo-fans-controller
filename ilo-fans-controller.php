@@ -356,8 +356,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					<span x-show="Object.keys($store.auto.cpuTemps).length === 0" class="dark:text-gray-700 text-gray-350">
 						No CPU sensors found
 					</span>
-					<span x-show="$store.auto.averageTemp !== null" class="dark:text-emerald-400/80 text-emerald-600 font-medium">
-						Avg <span x-text="$store.auto.averageTemp"></span>°C → <span x-text="$store.auto.targetSpeed"></span>%
+					<span x-show="$store.auto.maxTemp !== null" class="dark:text-emerald-400/80 text-emerald-600 font-medium">
+						Max <span x-text="$store.auto.maxTemp"></span>°C → <span x-text="$store.auto.targetSpeed"></span>%
 					</span>
 				</div>
 			</div>
@@ -605,7 +605,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				Alpine.store('auto', {
 					enabled: localStorage.getItem('autoMode') === '1',
 					cpuTemps: <?php echo json_encode($AUTO_STATUS['cpu_temps']); ?>,
-					averageTemp: <?php echo json_encode($AUTO_STATUS['average_temp']); ?>,
+					maxTemp: <?php echo json_encode($AUTO_STATUS['max_temp']); ?>,
 					curve: <?php echo json_encode($AUTO_STATUS['curve']); ?>,
 					targetSpeed: <?php echo json_encode($AUTO_STATUS['target_speed']); ?>,
 					pollInterval: <?php echo (int) $AUTO_STATUS['poll_interval']; ?> * 1000,
@@ -653,7 +653,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							const result = await res.json();
 							if (result.ok) {
 								this.cpuTemps = result.cpu_temps;
-								this.averageTemp = result.average_temp;
+								this.maxTemp = result.max_temp;
 								this.curve = result.curve || this.curve;
 								this.targetSpeed = result.target_speed;
 								Alpine.store('fans').fans = result.fans;

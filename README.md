@@ -21,9 +21,9 @@ This tool is a **PHP app** that uses the `php-curl` extension to **get the curre
 
 ### Temperature-based auto control 🌡️
 
-When **Auto (temperature)** is enabled in the UI (or via the CLI script below), fan speeds follow the average of the CPU temperature sensors from iLO:
+When **Auto (temperature)** is enabled in the UI (or via the CLI script below), fan speeds follow the **highest** CPU temperature sensor reading from iLO:
 
-| Average CPU temp | Fan speed |
+| Hottest CPU temp | Fan speed |
 | --- | --- |
 | < 50°C | 15% |
 | 50–60°C | 25% |
@@ -211,7 +211,7 @@ The tool exposes a simple API that can be used to:
 
 #### Get auto status / CPU temps (`GET ?api=auto`)
 
-Returns CPU temperatures, average, threshold, target speed, and current fans.
+Returns CPU temperatures, hottest CPU temp, curve, target speed, and current fans.
 
 <details>
 <summary>cURL example</summary>
