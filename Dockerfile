@@ -6,6 +6,8 @@ RUN chmod +x /usr/local/bin/install-php-extensions && \
     install-php-extensions ssh2
 
 COPY favicon.ico /var/www/html/
+COPY ilo-core.inc.php /var/www/html/ilo-core.inc.php
+COPY auto-control.php /var/www/html/auto-control.php
 COPY ilo-fans-controller.php /var/www/html/index.php
 
 COPY config.inc.php.env /var/www/html/config.inc.php

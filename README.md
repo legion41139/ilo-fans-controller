@@ -17,7 +17,31 @@
 
 ### How does it work? 🛠
 
-This tool is a **single PHP script** that uses the `php-curl` extension to **get the current server fan speeds from the iLO REST api** and the `php-ssh2` extension to **set the fan speeds using the [patched iLO SSH interface](#can-i-use-this-tool-with-my-hp-server-%EF%B8%8F).** You can also **create custom presets** to set a specific fan configuration with a single click, all with a **simple and clean web interface** made by using [Alpine.js](https://alpinejs.dev/) and [TailwindCSS](https://tailwindcss.com/).
+This tool is a **PHP app** that uses the `php-curl` extension to **get the current server fan speeds (and CPU temperatures) from the iLO REST api** and the `php-ssh2` extension to **set the fan speeds using the [patched iLO SSH interface](#can-i-use-this-tool-with-my-hp-server-%EF%B8%8F).** You can also **create custom presets** to set a specific fan configuration with a single click, or enable **temperature-based auto control**, all with a **simple and clean web interface** made by using [Alpine.js](https://alpinejs.dev/) and [TailwindCSS](https://tailwindcss.com/).
+
+### Temperature-based auto control 🌡️
+
+When **Auto (temperature)** is enabled in the UI (or via the CLI script below), fan speeds follow the average of the CPU temperature sensors from iLO:
+
+| Average CPU temp | Fan speed |
+| --- | --- |
+| ≤ 50°C | 15% |
+| > 50°C | 25% |
+
+Thresholds and speeds are configurable in [`config.inc.php`](config.inc.php) / Docker env vars (`AUTO_TEMP_THRESHOLD`, `AUTO_FAN_SPEED_COOL`, `AUTO_FAN_SPEED_WARM`).
+
+The web UI polls and re-applies while the page is open. For continuous control when the browser is closed, run `auto-control.php` on a schedule:
+
+```sh
+# Every minute via cron
+* * * * * php /var/www/html/ilo-fans-controller/auto-control.php >/dev/null 2>&1
+```
+
+Or with Docker:
+
+```sh
+docker exec ilo-fans-controller php /var/www/html/auto-control.php
+```
 
 ### Can I use this tool with my HP server? 🖥️
 
@@ -126,11 +150,11 @@ Or if you prefer, you can use `docker compose`, as the [docker-compose.yaml](htt
     $ILO_PASSWORD = 'AdministratorPassword1234';
     ```
 
-2. When you're done, create a new subdirectory in your web server root directory (usually `/var/www/html/`) and copy the `config.inc.php`, `ilo-fans-controller.php` and `favicon.ico` to it:
+2. When you're done, create a new subdirectory in your web server root directory (usually `/var/www/html/`) and copy the required files to it:
 
     ```sh
     sudo mkdir /var/www/html/ilo-fans-controller
-    sudo cp config.inc.php ilo-fans-controller.php favicon.ico /var/www/html/ilo-fans-controller/
+    sudo cp config.inc.php ilo-core.inc.php ilo-fans-controller.php auto-control.php favicon.ico /var/www/html/ilo-fans-controller/
     ```
 
     Then rename `ilo-fans-controller.php` to `index.php` (to make it work without specifying the filename in the URL):
@@ -182,6 +206,34 @@ The tool exposes a simple API that can be used to:
 * Create a preset 
 
 > The following examples use cURL to show how to use the API, but you can use any other tool you want.
+
+### Auto control APIs
+
+#### Get auto status / CPU temps (`GET ?api=auto`)
+
+Returns CPU temperatures, average, threshold, target speed, and current fans.
+
+<details>
+<summary>cURL example</summary>
+
+```sh
+curl 'http://<server ip>/ilo-fans-controller/index.php?api=auto'
+```
+
+</details>
+
+#### Apply temperature-based speeds (`POST`)
+
+<details>
+<summary>cURL example</summary>
+
+```sh
+curl -X POST 'http://<server ip>/ilo-fans-controller/index.php' \
+    -H 'Content-Type: application/json' \
+    -d '{"action": "auto"}'
+```
+
+</details>
 
 ### Fan APIs
 

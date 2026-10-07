@@ -1,68 +1,20 @@
 <?php
-// Require config variables
-require 'config.inc.php';
-
-function get_presets() {
-	if (!file_exists('presets.json'))  // Return default presets if the file doesn't exist
-		return [
-			[
-				'name' => 'Silent Mode',
-				'speeds' => [ 15 ],
-			],
-			[
-				'name' => 'Normal Mode',
-				'speeds' => [ 50 ],
-			],
-			[
-				'name' => 'Turbo Mode',
-				'speeds' => [ 100 ],
-			]
-		];
-	else
-		return json_decode(file_get_contents('presets.json'), true);
-}
-
-function get_fans() {
-	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;  // From config.inc.php
-
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
-
-	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");  // Authentication (Basic)
-
-	// An attempt to speed up the request
-	// curl_setopt($curl_handle, CURLOPT_ENCODING, '');
-	// curl_setopt($curl_handle, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-	// curl_setopt($curl_handle, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
-
-	// Disable SSL verification
-	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYHOST, 0);
-	curl_setopt($curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
-
-	curl_setopt($curl_handle, CURLOPT_FOLLOWLOCATION, true);  // Follow redirects
-	curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);  // Return the JSON data
-
-	$raw_ilo_data = curl_exec($curl_handle);
-
-	// Print errors if any
-	// echo curl_error($curl_handle);
-	// echo curl_errno($curl_handle);
-
-	if ($raw_ilo_data) {  // If the request was successful
-		$fans = [];
-		foreach (json_decode($raw_ilo_data, true)['Fans'] as $fan)
-			$fans[ $fan['FanName'] ] = $fan['CurrentReading'];
-	}
-
-	return $fans ?? [];
-}
+require_once __DIR__ . '/ilo-core.inc.php';
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-	$FANS = get_fans();
+	$AUTO_STATUS = get_auto_status();
+	$FANS = $AUTO_STATUS['fans'];
 
 	// Return fans in JSON format with ?api=fans
 	if (isset($_GET['api']) && $_GET['api'] == 'fans') {
 		header('Content-Type: application/json');
 		die(json_encode($FANS));
+	}
+
+	// Return CPU temps / auto curve status with ?api=auto
+	if (isset($_GET['api']) && $_GET['api'] == 'auto') {
+		header('Content-Type: application/json');
+		die(json_encode($AUTO_STATUS));
 	}
 
 	$PRESETS = get_presets();
@@ -77,57 +29,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 	// Get POST JSON data from JS fetch()
 	$data = json_decode(file_get_contents('php://input'), true);
 
-	if (isset($data['action']))  // Check if the action key exists
-		if ($data['action'] === 'fans' || $data['action'] === 'presets')  // Check if the action is valid
-			if ($data['action'] === 'fans' && isset($data['fans'])) {  // Set fans speeds
-				$FANS = get_fans();
-
-				if (is_int($data['fans']))  // Example: "fans": 50 - set all fans to 50%
-					$data['fans'] = array_fill_keys(array_keys($FANS), $data['fans']);  // Fill the array with the same speeds
-
-				$updated = 0;
-				$connected = false;
-				$ssh_handle = null;
-				foreach ($data['fans'] as $fan => $speed) {
-					if (array_key_exists($fan, $FANS)) {  // Check if the fan name is valid
-						$fan_index = array_search($fan, array_keys($FANS));
-						if (($speed >= $MINIMUM_FAN_SPEED && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
-							if (!$connected) {  // Connect to iLO (only once)
-								$ssh_handle = ssh2_connect($ILO_HOST, 22);
-								ssh2_auth_password($ssh_handle, $ILO_USERNAME, $ILO_PASSWORD);
-								$connected = true;
-							}
-
-							$stream = ssh2_exec($ssh_handle, "fan p $fan_index max " . ceil($speed / 100 * 255));
-							stream_set_blocking($stream, true);
-							stream_get_contents($stream);
-
-							$stream = ssh2_exec($ssh_handle, "fan p $fan_index min 255");
-							stream_set_blocking($stream, true);
-							stream_get_contents($stream);
-
-							$updated++;
-						}
-					} else
-						die("Invalid fan name: $fan");
-				}
-
-				// Wait until the fans are set
-				if ($updated > 0)
-					do
-						$FANS = get_fans();
-					while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
-
+	if (isset($data['action'])) {  // Check if the action key exists
+		if ($data['action'] === 'fans' && isset($data['fans'])) {
+			try {
+				$FANS = set_fan_speeds($data['fans']);
 				die(json_encode($FANS, JSON_PRETTY_PRINT));
-			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
-				$raw_presets = json_encode($data['presets'], JSON_PRETTY_PRINT);
-				file_put_contents('presets.json', $raw_presets);
-				die($raw_presets);
-			} else
-				die('Invalid request: missing "fans" or "presets" key.');
+			} catch (InvalidArgumentException $e) {
+				die($e->getMessage());
+			}
+		} else if ($data['action'] === 'auto') {  // Apply temperature-based fan speeds
+			header('Content-Type: application/json');
+			try {
+				die(json_encode(apply_temperature_control(), JSON_PRETTY_PRINT));
+			} catch (Throwable $e) {
+				http_response_code(500);
+				die(json_encode([ 'ok' => false, 'error' => $e->getMessage() ]));
+			}
+		} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
+			$raw_presets = json_encode($data['presets'], JSON_PRETTY_PRINT);
+			file_put_contents('presets.json', $raw_presets);
+			die($raw_presets);
+		} else if ($data['action'] === 'fans' || $data['action'] === 'presets')
+			die('Invalid request: missing "fans" or "presets" key.');
 		else
 			die('Invalid request: invalid "action" value.');
-	else
+	} else
 		die('Invalid request: missing "action" key.');
 
 	// Catch edge cases
@@ -374,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							class="outline-button flex-1 sm:px-1.5 px-2 py-1.5 sm:py-0.5 min-w-max text-sm"
 							:class="$store.presets.currentPreset == index ? '!font-semibold' : ''"
 							x-text="preset.name"
-							:disabled="$store.app.isLoading"
+							:disabled="$store.app.isLoading || $store.auto.enabled"
 							@click="$store.presets.applyPreset(index)"
 							@contextmenu="$store.presets.onRightClick($event, index)"
 						></button>
@@ -382,13 +308,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					<button
 						class="input cursor-pointer flex-1 border-dashed !bg-transparent sm:px-1.5 px-2 py-1.5 sm:py-0.5 sm:max-w-max text-sm dark:text-gray-875
 									 dark:hover:text-gray-825 dark:focus:text-gray-825 text-gray-175 hover:text-gray-275 focus:text-gray-275"
-						:disabled="$store.app.isLoading"
+						:disabled="$store.app.isLoading || $store.auto.enabled"
 						@click="$store.presets.newPreset()"
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5 mx-auto">
 							<path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
 						</svg>
 					</button>
+				</div>
+			</div>
+
+			<!-- Temperature-based auto control -->
+			<div class="mt-6 p-4 rounded-md border dark:border-gray-875 border-gray-150 dark:bg-gray-925 bg-gray-25">
+				<div class="flex items-center justify-between">
+					<div>
+						<h2 class="text-lg font-semibold select-none dark:text-white text-black">Auto (temperature)</h2>
+						<p class="text-sm dark:text-gray-500 text-gray-400 select-none mt-0.5">
+							≤ <span x-text="$store.auto.threshold"></span>°C → <span x-text="$store.auto.coolSpeed"></span>% ·
+							&gt; <span x-text="$store.auto.threshold"></span>°C → <span x-text="$store.auto.warmSpeed"></span>%
+						</p>
+					</div>
+
+					<button
+						id="auto-mode"
+						class="input cursor-pointer group h-5 w-10 !rounded-full px-0.5 flex items-center"
+						:class="$store.auto.enabled ? 'dark:!border-gray-825 !border-gray-275' : ''"
+						:disabled="$store.app.isLoading"
+						@click="$store.auto.toggle()"
+					>
+						<span
+							class="h-3.5 w-3.5 rounded-full transform transition-all duration-100"
+							:class="$store.auto.enabled ? 'bg-emerald-500 translate-x-5' : 'dark:bg-gray-825 bg-gray-175'"
+						></span>
+					</button>
+				</div>
+
+				<div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm font-mono select-none dark:text-gray-400 text-gray-500">
+					<template x-for="(temp, name) in $store.auto.cpuTemps" :key="name">
+						<span>
+							<span class="dark:text-gray-600 text-gray-350" x-text="name"></span>
+							<span class="dark:text-gray-200 text-gray-700 ml-1" x-text="temp + '°C'"></span>
+						</span>
+					</template>
+					<span x-show="Object.keys($store.auto.cpuTemps).length === 0" class="dark:text-gray-700 text-gray-350">
+						No CPU sensors found
+					</span>
+					<span x-show="$store.auto.averageTemp !== null" class="dark:text-emerald-400/80 text-emerald-600 font-medium">
+						Avg <span x-text="$store.auto.averageTemp"></span>°C → <span x-text="$store.auto.targetSpeed"></span>%
+					</span>
 				</div>
 			</div>
 
@@ -399,7 +366,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					<label
 						for="edit-all"
 						class="text-sm font-medium select-none transition-colors duration-75"
-						:class="[ $store.app.editAll ? 'dark:text-gray-300 text-gray-700' : 'dark:text-gray-700 text-gray-300', $store.app.isLoading ? '!opacity-50' : '' ]"
+						:class="[ $store.app.editAll ? 'dark:text-gray-300 text-gray-700' : 'dark:text-gray-700 text-gray-300', ($store.app.isLoading || $store.auto.enabled) ? '!opacity-50' : '' ]"
 					>
 						Edit all
 					</label>
@@ -409,7 +376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						id="edit-all"
 						class="input cursor-pointer group h-5 w-10 !rounded-full px-0.5 flex items-center"
 						:class="$store.app.editAll ? 'dark:!border-gray-825 !border-gray-275' : ''"
-						:disabled="$store.app.isLoading"
+						:disabled="$store.app.isLoading || $store.auto.enabled"
 						@click="$store.app.editAll = !$store.app.editAll"
 					>
 						<span
@@ -443,18 +410,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 										enabled:[&::-webkit-slider-thumb]:focus:bg-emerald-600 dark:enabled:[&::-webkit-slider-thumb]:focus:bg-emerald-400
 										enabled:[&::-webkit-slider-thumb]:peer-hover:bg-emerald-600 dark:enabled:[&::-webkit-slider-thumb]:peer-hover:bg-emerald-400
 											enabled:peer-hover:border-gray-175 dark:enabled:peer-hover:border-gray-825 h-5 sm:h-3.5 !rounded-full disabled:cursor-default"
-								:disabled="$store.app.isLoading"
+								:disabled="$store.app.isLoading || $store.auto.enabled"
 								x-model="speed"
 							>
 						</div>
 
 						<div x-data="{ originalSpeed: speed }" class="select-none items-center flex flex-row sm:flex-row">
-							<input type="number" min="<?php echo $MINIMUM_FAN_SPEED; ?>" max="100" required class="w-16 sm:ml-3 max-w-max px-1.5 py-0.5 font-mono text-gray-800" :placeholder="originalSpeed" :disabled="$store.app.isLoading" x-model="speed">
+							<input type="number" min="<?php echo $MINIMUM_FAN_SPEED; ?>" max="100" required class="w-16 sm:ml-3 max-w-max px-1.5 py-0.5 font-mono text-gray-800" :placeholder="originalSpeed" :disabled="$store.app.isLoading || $store.auto.enabled" x-model="speed">
 
 							<button
 								class="outline-button mx-3 sm:mr-0 px-1 text-sm"
 								type="button"
-								@click="speed = originalSpeed" :disabled="speed == originalSpeed || $store.app.isLoading"
+								@click="speed = originalSpeed" :disabled="speed == originalSpeed || $store.app.isLoading || $store.auto.enabled"
 							>Reset</button>
 
 							<!-- Divider (only mobile) -->
@@ -469,7 +436,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					type="button"
 					class="!outline-none transition-all duration-75 sm:h-10 h-11 sm:w-[15rem] items-center w-full flex justify-center bg-emerald-500 hover:bg-emerald-500/90
 								active:bg-emerald-500/80 px-2 py-1.5 rounded-md text-white font-medium select-none cursor-pointer disabled:cursor-progress disabled:!bg-emerald-500/60 disabled:text-opacity-60"
-					@click="$store.app.applySpeeds()"
+					@click="$store.auto.enabled ? $store.auto.apply() : $store.app.applySpeeds()"
 					:disabled="$store.app.isLoading"
 				>
 					<template x-if="!$store.app.isLoading">
@@ -477,7 +444,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 							<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5">
 								<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clip-rule="evenodd" />
 							</svg>
-							<span>Set speeds</span>
+							<span x-text="$store.auto.enabled ? 'Apply auto speeds' : 'Set speeds'"></span>
 						</div>
 					</template>
 					<template x-if="$store.app.isLoading">
@@ -630,6 +597,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 					},
 
 					init() { this.detectPreset(); }
+				});
+
+				Alpine.store('auto', {
+					enabled: localStorage.getItem('autoMode') === '1',
+					cpuTemps: <?php echo json_encode($AUTO_STATUS['cpu_temps']); ?>,
+					averageTemp: <?php echo json_encode($AUTO_STATUS['average_temp']); ?>,
+					threshold: <?php echo (int) $AUTO_STATUS['threshold']; ?>,
+					coolSpeed: <?php echo (int) $AUTO_STATUS['cool_speed']; ?>,
+					warmSpeed: <?php echo (int) $AUTO_STATUS['warm_speed']; ?>,
+					targetSpeed: <?php echo json_encode($AUTO_STATUS['target_speed']); ?>,
+					pollInterval: <?php echo (int) $AUTO_STATUS['poll_interval']; ?> * 1000,
+					_timer: null,
+
+					async toggle() {
+						this.enabled = !this.enabled;
+						localStorage.setItem('autoMode', this.enabled ? '1' : '0');
+
+						if (this.enabled) {
+							await this.apply();
+							this.startPolling();
+						} else {
+							this.stopPolling();
+						}
+					},
+
+					startPolling() {
+						this.stopPolling();
+						this._timer = setInterval(() => {
+							if (this.enabled && !Alpine.store('app').isLoading)
+								this.apply();
+						}, this.pollInterval);
+					},
+
+					stopPolling() {
+						if (this._timer) {
+							clearInterval(this._timer);
+							this._timer = null;
+						}
+					},
+
+					async apply() {
+						const app = Alpine.store('app');
+						app.isLoading = true;
+						app.requestTime = null;
+						const currentTimestamp = new Date().getTime();
+
+						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+							method: 'POST',
+							body: JSON.stringify({ action: 'auto' }),
+						});
+
+						if (res.ok) {
+							const result = await res.json();
+							if (result.ok) {
+								this.cpuTemps = result.cpu_temps;
+								this.averageTemp = result.average_temp;
+								this.threshold = result.threshold;
+								this.targetSpeed = result.target_speed;
+								Alpine.store('fans').fans = result.fans;
+								Alpine.store('presets').currentPreset = null;
+								Alpine.store('presets').detectPreset();
+							}
+							app.requestTime = new Date().getTime() - currentTimestamp;
+						}
+
+						app.isLoading = false;
+					},
+
+					init() {
+						if (this.enabled)
+							this.startPolling();
+					}
 				});
 
 				Alpine.store('app', {
